@@ -1,8 +1,9 @@
 # ------- Developed by Alan Joshua ---------
-# ----------------
-# It is a spreadsheet chatbot, where user can upload their spreadsheet and chat with it
+# ---------------- 
+# Optimized spreadsheet chatbot with better error handling,
+# performance improvements, and cleaner code structure
 # --------------
-# model used : Qwen3 4B
+# Model used: Qwen3 4B
 
 import streamlit as st
 import pandas as pd
@@ -10,106 +11,198 @@ import re
 import io
 import sys
 from mlx_lm import load, generate
+from typing import Optional, Tuple, Dict, Any
 
 # -----------------------------
-# Load Model Once
+# Constants
+# -----------------------------
+MODEL_NAME = "mlx-community/Qwen3-4B-Instruct-2507-4bit"
+MAX_ROWS_TO_DISPLAY = 1000  # For preview purposes
+
+# -----------------------------
+# Load Model with cache
 # -----------------------------
 @st.cache_resource
-def load_model():
-    return load("mlx-community/Qwen3-4B-Instruct-2507-4bit")
+def load_model() -> Tuple[Any, Any]:  # Using Any since mlx_lm types are not exposed
+    """Load and cache the MLX model and tokenizer."""
+    return load(MODEL_NAME)
 
 model, tokenizer = load_model()
 
 # -----------------------------
-# CSV Upload
+# Data Cleaning Functions
 # -----------------------------
-st.title("📊 Qwen CSV Analyst Bot")
-uploaded_file = st.file_uploader("Upload your CSV file", type=["csv"])
-
-if uploaded_file:
-    df = pd.read_csv(uploaded_file)
+def clean_dataframe(df: pd.DataFrame) -> pd.DataFrame:
+    """Clean and standardize the input DataFrame."""
     # Clean column names
     df.columns = df.columns.str.strip()
-    df = df.dropna(how="all").drop_duplicates()
-    for col in df.select_dtypes(include=["object"]).columns:
+    
+    # Remove empty rows and duplicates
+    df = df.dropna(how='all').drop_duplicates()
+    
+    # Clean string columns
+    for col in df.select_dtypes(include=['object']):
         df[col] = df[col].astype(str).str.strip()
-        df[col] = df[col].replace({"nan": None, "": None})
+        df[col] = df[col].replace({'nan': None, '': None})
+    
+    # Drop rows with any NA values after cleaning
     df = df.dropna()
+    
+    # Try to convert object columns to numeric where possible
     for col in df.columns:
-        if df[col].dtype == "object":
+        if df[col].dtype == 'object':
             try:
                 df[col] = pd.to_numeric(df[col])
-            except ValueError:
+            except (ValueError, TypeError):
                 pass
+    
+    return df
 
-    st.success(f"✅ Cleaned data loaded: {len(df)} rows, {len(df.columns)} columns.")
-    st.dataframe(df)
+# -----------------------------
+# Code Execution Functions
+# -----------------------------
+def execute_code(code: str, df: pd.DataFrame) -> Tuple[Optional[Any], str]:
+    """
+    Execute Python code in a controlled environment.
+    Returns (result, output_text) tuple.
+    """
+    local_vars = {'pd': pd, 'df': df}
+    output_capture = io.StringIO()
+    
+    # Redirect stdout temporarily
+    original_stdout = sys.stdout
+    sys.stdout = output_capture
+    
+    try:
+        # Split code into lines and handle the last line specially
+        code_lines = [line for line in code.split('\n') if line.strip()]
+        if not code_lines:
+            return None, ""
+            
+        # Execute all but last line
+        if len(code_lines) > 1:
+            exec('\n'.join(code_lines[:-1]), local_vars)
+        
+        # Try to eval last line if it's an expression
+        last_line = code_lines[-1].strip()
+        try:
+            result = eval(last_line, local_vars)
+        except SyntaxError:
+            exec(last_line, local_vars)
+            result = None
+    except Exception as e:
+        result = None
+        output_capture.write(f"Error during execution: {str(e)}")
+    finally:
+        # Restore stdout
+        sys.stdout = original_stdout
+    
+    output_text = output_capture.getvalue().strip()
+    return result, output_text
 
-    # -----------------------------
-    # User Query
-    # -----------------------------
-    user_query = st.text_input("Ask a question about the CSV:")
-
-    if st.button("Ask") and user_query.strip():
-        with st.spinner("🤖 Thinking... please wait"):
-            prompt = f"""
-            You are a skilled data analyst.
-            You have a cleaned Pandas DataFrame called `df` with these columns: {df.columns.tolist()}.
-            User Question: {user_query}
-
-            Instructions:
-            - If you need Python code, put it inside a ```python``` block.
-            - Use only exact column names from above.
-            - Avoid guessing column names.
-            - Assume df and pd are already defined.
-            """
-
+# -----------------------------
+# Main App
+# -----------------------------
+def main():
+    st.title("📊 Qwen CSV Analyst Bot")
+    st.caption("Upload a CSV file and ask questions about your data")
+    
+    # File upload section
+    uploaded_file = st.file_uploader(
+        "Upload your CSV file", 
+        type=["csv"],
+        help="Upload a CSV file to analyze"
+    )
+    
+    if not uploaded_file:
+        st.info("Please upload a CSV file to begin analysis")
+        return
+    
+    # Load and clean data
+    try:
+        df = pd.read_csv(uploaded_file)
+        df = clean_dataframe(df)
+        
+        st.success(f"✅ Cleaned data loaded: {len(df)} rows, {len(df.columns)} columns")
+        st.dataframe(df.head(min(len(df), MAX_ROWS_TO_DISPLAY)))
+        
+        # Display basic stats
+        with st.expander("📊 Basic Statistics"):
+            st.write(df.describe(include='all'))
+    except Exception as e:
+        st.error(f"❌ Error loading CSV file: {str(e)}")
+        return
+    
+    # User query section
+    user_query = st.text_input(
+        "Ask a question about the CSV:",
+        placeholder="e.g., 'Show sales by region' or 'What are the top 5 products?'"
+    )
+    
+    if not user_query.strip():
+        return
+    
+    if st.button("Analyze", type="primary"):
+        with st.spinner("🤖 Analyzing your data... Please wait"):
             try:
-                # Generate answer
-                answer = generate(model, tokenizer, prompt=prompt, verbose=False).strip()
+                # Construct prompt with data context
+                prompt = f"""
+                You are a skilled data analyst working with a Pandas DataFrame called 'df'.
+                DataFrame columns: {df.columns.tolist()}
+                First 3 rows as example:
+                {df.head(3).to_string()}
 
-                st.markdown("**Generated Code / Answer:**")
-                st.code(answer, language="python")
+                User Question: {user_query}
 
-                # Extract Python code
+                Instructions:
+                1. Provide Python code to answer the question in a ```python``` block
+                2. Use only the exact column names shown above
+                3. Include comments explaining the code
+                4. The code should end with the result to display
+                5. Assume 'df' and 'pd' are already available
+                """
+                
+                # Generate response
+                answer = generate(
+                    model, 
+                    tokenizer, 
+                    prompt=prompt, 
+                    verbose=False,
+                    max_tokens=1000
+                ).strip()
+                
+                # Display the raw answer
+                st.subheader("🔍 Model Response")
+                st.markdown(answer)
+                
+                # Extract and execute Python code
                 code_blocks = re.findall(r"```python(.*?)```", answer, re.DOTALL)
                 if not code_blocks:
-                    st.warning("⚠️ No Python code found in the model's response.")
-                else:
-                    code_to_run = code_blocks[0].strip()
-                    code_to_run = code_to_run.replace("import pandas as pd", "")
-
-                    # Controlled namespace
-                    local_vars = {"pd": pd, "df": df}
-
-                    # Capture stdout
-                    stdout_backup = sys.stdout
-                    sys.stdout = io.StringIO()
-
-                    # Try executing
-                    code_lines = code_to_run.strip().split("\n")
-                    last_line = code_lines[-1].strip()
-
-                    try:
-                        exec("\n".join(code_lines[:-1]), local_vars)
-                        last_value = eval(last_line, local_vars)
-                    except:
-                        exec(code_to_run, local_vars)
-                        last_value = None
-
-                    # Restore stdout
-                    output_text = sys.stdout.getvalue().strip()
-                    sys.stdout = stdout_backup
-
-                    st.markdown("### 📄 Execution Output:")
-                    if output_text:
-                        st.text(output_text)
-                    elif isinstance(last_value, pd.DataFrame):
-                        st.dataframe(last_value)
-                    elif last_value is not None:
-                        st.write(last_value)
+                    st.warning("⚠️ No executable Python code found in the response")
+                    return
+                
+                code_to_run = code_blocks[0].strip()
+                st.subheader("🛠️ Executing Code")
+                st.code(code_to_run, language='python')
+                
+                # Execute the code
+                result, output = execute_code(code_to_run, df)
+                
+                # Display results
+                st.subheader("📊 Results")
+                if output:
+                    st.text(output)
+                
+                if result is not None:
+                    if isinstance(result, pd.DataFrame):
+                        st.dataframe(result)
                     else:
-                        st.info("No output produced.")
-
+                        st.write(result)
+                elif not output:
+                    st.info("Code executed but produced no output")
+                    
             except Exception as e:
-                st.error(f"❌ Error: {e}")
+                st.error(f"❌ Error during analysis: {str(e)}")
+
+if __name__ == "__main__":
+    main()
