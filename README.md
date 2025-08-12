@@ -26,3 +26,8 @@ An **AI-powered CSV data analyst** built with **Streamlit** and **Qwen3-4B-Instr
 - **Regex** – Extract Python code blocks from AI responses.
 
 ---
+## 📸 Project Screenshot
+
+![Demo Screenshot](demo1.jpeg "Project Demo")
+![Demo Screenshot](demo2.jpeg "Project Demo")
+![Demo Screenshot](demo3.jpeg "Project Demo")
