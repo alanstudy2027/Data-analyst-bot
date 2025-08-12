@@ -28,6 +28,6 @@ An **AI-powered CSV data analyst** built with **Streamlit** and **Qwen3-4B-Instr
 ---
 ## 📸 Project Screenshot
 
-![Demo Screenshot](demo1.jpeg "Project Demo")
-![Demo Screenshot](demo2.jpeg "Project Demo")
-![Demo Screenshot](demo3.jpeg "Project Demo")
+![Demo Screenshot](demo1.png "Project Demo")
+![Demo Screenshot](demo2.png "Project Demo")
+![Demo Screenshot](demo3.png "Project Demo")
